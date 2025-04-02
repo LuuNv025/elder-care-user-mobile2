@@ -5,6 +5,7 @@ import { StackNavigationProp } from '@react-navigation/stack';
 import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/StackNavigator';
 import { useBookings } from '../context/BookingsContext';
+import { Picker } from '@react-native-picker/picker';
 
 type BookAppointmentProps = {
   route: RouteProp<RootStackParamList, 'BookAppointment'>;
@@ -18,14 +19,17 @@ type SuccessModalProps = {
     doctorName: string;
     date: string;
     time: string;
+    isSeriesBooking?: boolean;
+    endDate?: string;
   };
 };
 
-const timeSlots = [
-  ['09:00 AM', '09:30 AM', '10:00 AM'],
-  ['10:30 AM', '11:00 AM', '11:30 AM'],
-  ['3:00 PM', '3:30 PM', '4:00 PM'],
-  ['4:30 PM', '5:00 PM', '5:30 PM'],
+type BookingMode = 'single' | 'series';
+
+const timeOptions = [
+  '08:00 AM', '09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM',
+  '01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM', '05:00 PM',
+  '06:00 PM', '07:00 PM', '08:00 PM', '09:00 PM', '10:00 PM'
 ];
 
 const getDaysInMonth = (year: number, month: number) => {
@@ -49,7 +53,11 @@ const SuccessModal: React.FC<SuccessModalProps> = ({ visible, onDone, appointmen
         </View>
         <Text style={styles.congratsText}>Congratulations!</Text>
         <Text style={styles.appointmentText}>
-          Your appointment with {appointment.doctorName.replace(/^Dr\.\s+/, '')} is confirmed for {appointment.date}, at {appointment.time}.
+          Your {appointment.isSeriesBooking ? 'series of appointments' : 'appointment'} with {appointment.doctorName.replace(/^Dr\.\s+/, '')} {
+            appointment.isSeriesBooking 
+              ? `are confirmed from ${appointment.date} to ${appointment.endDate}`
+              : `is confirmed for ${appointment.date}`
+          }, at {appointment.time}.
         </Text>
         <TouchableOpacity style={styles.doneButton} onPress={onDone}>
           <Text style={styles.doneButtonText}>Done</Text>
@@ -63,8 +71,11 @@ const BookAppointment: React.FC<BookAppointmentProps> = ({ route, navigation }) 
   const { doctor } = route.params;
   const { addBooking } = useBookings();
 
+  const [bookingMode, setBookingMode] = useState<BookingMode>('single');
   const [selectedDate, setSelectedDate] = useState<number | null>(null);
-  const [selectedTime, setSelectedTime] = useState('');
+  const [selectedEndDate, setSelectedEndDate] = useState<number | null>(null);
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
 
   const today = new Date();
@@ -92,6 +103,7 @@ const BookAppointment: React.FC<BookAppointmentProps> = ({ route, navigation }) 
       }
     }
     setSelectedDate(null);
+    setSelectedEndDate(null);
   };
 
   const formatAppointmentDate = (year: number, month: number, day: number): string => {
@@ -104,21 +116,40 @@ const BookAppointment: React.FC<BookAppointmentProps> = ({ route, navigation }) 
   };
 
   const handleConfirm = () => {
-    if (!selectedDate || !selectedTime) {
+    if (!selectedDate || !startTime || !endTime || (bookingMode === 'series' && !selectedEndDate)) {
       return;
     }
 
-    const formattedDate = formatAppointmentDate(currentYear, currentMonth, selectedDate);
-    
-    addBooking({
-      doctorId: doctor.id,
-      doctorName: doctor.name,
-      doctorSpecialty: doctor.specialty,
-      doctorImage: doctor.image,
-      clinic: doctor.clinic || "Women's Health Clinic",
-      date: formattedDate,
-      time: selectedTime,
-    });
+    const formattedStartDate = formatAppointmentDate(currentYear, currentMonth, selectedDate);
+    const formattedEndDate = bookingMode === 'series' 
+      ? formatAppointmentDate(currentYear, currentMonth, selectedEndDate!)
+      : undefined;
+
+    // For series booking, create multiple bookings
+    if (bookingMode === 'series' && selectedEndDate) {
+      for (let day = selectedDate; day <= selectedEndDate; day++) {
+        addBooking({
+          doctorId: doctor.id,
+          doctorName: doctor.name,
+          doctorSpecialty: doctor.specialty,
+          doctorImage: doctor.image,
+          clinic: doctor.clinic || "Women's Health Clinic",
+          date: formatAppointmentDate(currentYear, currentMonth, day),
+          time: `${startTime} - ${endTime}`,
+        });
+      }
+    } else {
+      // Single booking
+      addBooking({
+        doctorId: doctor.id,
+        doctorName: doctor.name,
+        doctorSpecialty: doctor.specialty,
+        doctorImage: doctor.image,
+        clinic: doctor.clinic || "Women's Health Clinic",
+        date: formattedStartDate,
+        time: `${startTime} - ${endTime}`,
+      });
+    }
 
     setShowSuccess(true);
   };
@@ -126,6 +157,27 @@ const BookAppointment: React.FC<BookAppointmentProps> = ({ route, navigation }) 
   const handleDone = () => {
     setShowSuccess(false);
     navigation.navigate('MyBookings');
+  };
+
+  const handleDayPress = (day: number) => {
+    if (bookingMode === 'single') {
+      setSelectedDate(day);
+      setSelectedEndDate(null);
+    } else {
+      if (!selectedDate || (selectedDate && selectedEndDate)) {
+        // Start new selection
+        setSelectedDate(day);
+        setSelectedEndDate(null);
+      } else {
+        // Complete the selection
+        if (day >= selectedDate) {
+          setSelectedEndDate(day);
+        } else {
+          setSelectedEndDate(selectedDate);
+          setSelectedDate(day);
+        }
+      }
+    }
   };
 
   return (
@@ -136,6 +188,25 @@ const BookAppointment: React.FC<BookAppointmentProps> = ({ route, navigation }) 
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Book Appointment</Text>
         <View style={styles.placeholder} />
+      </View>
+
+      <View style={styles.bookingModeContainer}>
+        <TouchableOpacity 
+          style={[styles.modeTab, bookingMode === 'single' && styles.activeTab]}
+          onPress={() => setBookingMode('single')}
+        >
+          <Text style={[styles.modeText, bookingMode === 'single' && styles.activeText]}>
+            Book by Day
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.modeTab, bookingMode === 'series' && styles.activeTab]}
+          onPress={() => setBookingMode('series')}
+        >
+          <Text style={[styles.modeText, bookingMode === 'series' && styles.activeText]}>
+            Book Series of Days
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.content}>
@@ -162,7 +233,11 @@ const BookAppointment: React.FC<BookAppointmentProps> = ({ route, navigation }) 
             ))}
             {Array(daysInMonth).fill(null).map((_, index) => {
               const day = index + 1;
-              const isSelected = day === selectedDate;
+              const isSelected = bookingMode === 'single' 
+                ? day === selectedDate
+                : selectedDate && selectedEndDate 
+                  ? day >= selectedDate && day <= selectedEndDate
+                  : day === selectedDate;
               const isToday = day === today.getDate() && 
                             currentMonth === today.getMonth() && 
                             currentYear === today.getFullYear();
@@ -175,7 +250,7 @@ const BookAppointment: React.FC<BookAppointmentProps> = ({ route, navigation }) 
                     isSelected && styles.selectedDay,
                     isToday && styles.today,
                   ]}
-                  onPress={() => setSelectedDate(day)}
+                  onPress={() => handleDayPress(day)}
                 >
                   <Text style={[
                     styles.dayText,
@@ -191,43 +266,52 @@ const BookAppointment: React.FC<BookAppointmentProps> = ({ route, navigation }) 
         </View>
 
         <View style={styles.timeSection}>
-          <Text style={styles.sectionTitle}>Available Time Slots</Text>
-          <View style={styles.timeSlots}>
-            {timeSlots.map((row, rowIndex) => (
-              <View key={rowIndex} style={styles.timeRow}>
-                {row.map((time) => (
-                  <TouchableOpacity
-                    key={time}
-                    style={[
-                      styles.timeSlot,
-                      selectedTime === time && styles.selectedTimeSlot,
-                    ]}
-                    onPress={() => setSelectedTime(time)}
-                  >
-                    <Text style={[
-                      styles.timeText,
-                      selectedTime === time && styles.selectedTimeText,
-                    ]}>
-                      {time}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+          <Text style={styles.sectionTitle}>Select Time</Text>
+          <View style={styles.timePickerContainer}>
+            <View style={styles.pickerWrapper}>
+              <Text style={styles.pickerLabel}>Start Time</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={startTime}
+                  onValueChange={(itemValue) => setStartTime(itemValue)}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select start time" value="" />
+                  {timeOptions.map((time) => (
+                    <Picker.Item key={time} label={time} value={time} />
+                  ))}
+                </Picker>
               </View>
-            ))}
+            </View>
+            <View style={styles.pickerWrapper}>
+              <Text style={styles.pickerLabel}>End Time</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={endTime}
+                  onValueChange={(itemValue) => setEndTime(itemValue)}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select end time" value="" />
+                  {timeOptions.map((time) => (
+                    <Picker.Item key={time} label={time} value={time} />
+                  ))}
+                </Picker>
+              </View>
+            </View>
           </View>
         </View>
-      </ScrollView>
 
-      <TouchableOpacity
-        style={[
-          styles.confirmButton,
-          (!selectedDate || !selectedTime) && styles.confirmButtonDisabled,
-        ]}
-        onPress={handleConfirm}
-        disabled={!selectedDate || !selectedTime}
-      >
-        <Text style={styles.confirmButtonText}>Confirm</Text>
-      </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.confirmButton,
+            (!selectedDate || !startTime || !endTime || (bookingMode === 'series' && !selectedEndDate)) && styles.disabledButton
+          ]}
+          onPress={handleConfirm}
+          disabled={!selectedDate || !startTime || !endTime || (bookingMode === 'series' && !selectedEndDate)}
+        >
+          <Text style={styles.confirmButtonText}>Confirm Booking</Text>
+        </TouchableOpacity>
+      </ScrollView>
 
       <SuccessModal
         visible={showSuccess}
@@ -235,7 +319,9 @@ const BookAppointment: React.FC<BookAppointmentProps> = ({ route, navigation }) 
         appointment={{
           doctorName: doctor.name,
           date: selectedDate ? formatAppointmentDate(currentYear, currentMonth, selectedDate) : '',
-          time: selectedTime,
+          time: `${startTime} - ${endTime}`,
+          isSeriesBooking: bookingMode === 'series',
+          endDate: selectedEndDate ? formatAppointmentDate(currentYear, currentMonth, selectedEndDate) : undefined,
         }}
       />
     </View>
@@ -251,9 +337,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginTop: 40,
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E1E1E1',
   },
   headerTitle: {
     fontSize: 20,
@@ -263,6 +349,31 @@ const styles = StyleSheet.create({
   placeholder: {
     width: 24,
   },
+  bookingModeContainer: {
+    flexDirection: 'row',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E1E1E1',
+  },
+  modeTab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: 8,
+    backgroundColor: '#F5F6FA',
+    marginHorizontal: 4,
+  },
+  activeTab: {
+    backgroundColor: '#007AFF',
+  },
+  modeText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#2E3A59',
+  },
+  activeText: {
+    color: '#FFFFFF',
+  },
   content: {
     flex: 1,
   },
@@ -270,8 +381,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    marginBottom: 16,
+    padding: 16,
   },
   monthYear: {
     fontSize: 18,
@@ -279,51 +389,50 @@ const styles = StyleSheet.create({
     color: '#2E3A59',
   },
   calendar: {
-    marginBottom: 24,
+    padding: 16,
   },
   weekDaysContainer: {
     flexDirection: 'row',
     marginBottom: 8,
-    paddingHorizontal: 16,
   },
   weekDay: {
     flex: 1,
     textAlign: 'center',
-    color: '#8F9BB3',
-    fontSize: 14,
+    color: '#2E3A59',
+    fontWeight: '500',
   },
   daysContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingHorizontal: 16,
   },
   dayCell: {
     width: '14.28%',
     aspectRatio: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
+    padding: 4,
   },
   dayText: {
     fontSize: 16,
     color: '#2E3A59',
   },
   selectedDay: {
-    backgroundColor: '#2E3A59',
+    backgroundColor: '#007AFF',
     borderRadius: 8,
   },
   selectedDayText: {
-    color: '#fff',
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
   today: {
-    backgroundColor: '#F7F9FC',
+    backgroundColor: '#F0F0F0',
     borderRadius: 8,
   },
   todayText: {
-    color: '#2E3A59',
     fontWeight: '600',
   },
   timeSection: {
-    paddingHorizontal: 16,
+    padding: 16,
   },
   sectionTitle: {
     fontSize: 18,
@@ -331,44 +440,38 @@ const styles = StyleSheet.create({
     color: '#2E3A59',
     marginBottom: 16,
   },
-  timeSlots: {
-    marginBottom: 24,
+  timePickerContainer: {
+    gap: 16,
   },
-  timeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
+  pickerWrapper: {
+    gap: 8,
   },
-  timeSlot: {
-    flex: 1,
-    marginHorizontal: 4,
-    paddingVertical: 12,
-    backgroundColor: '#F7F9FC',
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  selectedTimeSlot: {
-    backgroundColor: '#2E3A59',
-  },
-  timeText: {
-    fontSize: 14,
+  pickerLabel: {
+    fontSize: 16,
     color: '#2E3A59',
+    fontWeight: '500',
   },
-  selectedTimeText: {
-    color: '#fff',
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: '#E1E1E1',
+    borderRadius: 8,
+    backgroundColor: '#F5F6FA',
+  },
+  picker: {
+    height: 50,
   },
   confirmButton: {
     margin: 16,
-    backgroundColor: '#2E3A59',
-    paddingVertical: 16,
+    backgroundColor: '#007AFF',
+    padding: 16,
     borderRadius: 12,
     alignItems: 'center',
   },
-  confirmButtonDisabled: {
-    backgroundColor: '#EDF1F7',
+  disabledButton: {
+    backgroundColor: '#B4B4B4',
   },
   confirmButtonText: {
-    color: '#fff',
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
@@ -379,7 +482,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 24,
     width: '80%',
@@ -389,9 +492,9 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: '#4CAF50',
-    justifyContent: 'center',
+    backgroundColor: '#34C759',
     alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 16,
   },
   congratsText: {
@@ -402,19 +505,18 @@ const styles = StyleSheet.create({
   },
   appointmentText: {
     fontSize: 16,
-    color: '#8F9BB3',
+    color: '#2E3A59',
     textAlign: 'center',
     marginBottom: 24,
-    lineHeight: 24,
   },
   doneButton: {
-    backgroundColor: '#2E3A59',
-    paddingVertical: 12,
+    backgroundColor: '#007AFF',
     paddingHorizontal: 32,
+    paddingVertical: 12,
     borderRadius: 8,
   },
   doneButtonText: {
-    color: '#fff',
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
